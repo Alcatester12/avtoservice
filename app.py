@@ -1,0 +1,295 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import datetime
+from models import Request, Comment
+from data import requests, users, comments, load_data
+
+class App:
+    def __init__(self):
+        load_data()
+        self.current_user = None
+        self.window = tk.Tk()
+        self.window.title("Автосервис - Учет заявок")
+        self.window.geometry("800x600")
+        self.show_login()
+        self.window.mainloop()
+
+    def clear_window(self):
+        for widget in self.window.winfo_children():
+            widget.destroy()
+
+    def show_login(self):
+        self.clear_window()
+        frame = tk.Frame(self.window)
+        frame.pack(expand=True)
+        tk.Label(frame, text="ВХОД В СИСТЕМУ", font=("Arial", 16)).pack(pady=20)
+        tk.Label(frame, text="Логин:").pack()
+        self.login_entry = tk.Entry(frame)
+        self.login_entry.pack(pady=5)
+        tk.Label(frame, text="Пароль:").pack()
+        self.pass_entry = tk.Entry(frame, show="*")
+        self.pass_entry.pack(pady=5)
+        tk.Button(frame, text="Войти", command=self.try_login).pack(pady=20)
+
+    def try_login(self):
+        for user in users:
+            if user["login"] == self.login_entry.get() and user["password"] == self.pass_entry.get():
+                self.current_user = user
+                self.show_main_menu()
+                return
+        messagebox.showerror("Ошибка", "Неверный логин или пароль")
+
+    def show_main_menu(self):
+        self.clear_window()
+        tk.Label(self.window, text="ГЛАВНОЕ МЕНЮ", font=("Arial", 16)).pack(pady=20)
+        tk.Label(self.window, text=f"{self.current_user['name']} ({self.current_user['role']})").pack()
+        buttons = [
+            ("Все заявки", self.show_all_requests),
+            ("Новая заявка", self.add_request),
+            ("Поиск", self.show_search),
+            ("Статистика", self.show_stats)
+        ]
+        if self.current_user["role"] == "Автомеханик":
+            buttons.insert(3, ("Мои заявки", self.show_my_requests))
+        for text, cmd in buttons:
+            tk.Button(self.window, text=text, width=20, command=cmd).pack(pady=5)
+        tk.Button(self.window, text="Выход", width=20, command=self.window.quit).pack(pady=20)
+
+    def show_requests_list(self, title, req_list):
+        self.clear_window()
+        tk.Button(self.window, text="← Назад", command=self.show_main_menu).pack(anchor="w", pady=5)
+        tk.Label(self.window, text=title, font=("Arial", 14)).pack(pady=10)
+        if not req_list:
+            tk.Label(self.window, text="Нет заявок").pack()
+            return
+        frame = tk.Frame(self.window)
+        frame.pack(fill="both", expand=True, padx=10)
+        scrollbar = tk.Scrollbar(frame)
+        scrollbar.pack(side="right", fill="y")
+        self.listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set)
+        self.listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.listbox.yview)
+        for req in req_list:
+            self.listbox.insert("end", f"ID: {req.id} | {req.start_date} | {req.car_model} | {req.status}")
+        self.current_req_list = req_list
+        tk.Button(self.window, text="Просмотреть", command=self.show_selected_request).pack(pady=10)
+
+    def show_all_requests(self):
+        self.show_requests_list("ВСЕ ЗАЯВКИ", requests)
+
+    def show_my_requests(self):
+        my_reqs = [r for r in requests if r.master_id == self.current_user.get("id")]
+        self.show_requests_list("МОИ ЗАЯВКИ", my_reqs)
+
+    def show_selected_request(self):
+        sel = self.listbox.curselection()
+        if sel:
+            self.show_request_details(self.current_req_list[sel[0]])
+
+    def show_request_details(self, req):
+        win = tk.Toplevel(self.window)
+        win.title(f"Заявка №{req.id}")
+        win.geometry("500x500")
+        text = tk.Text(win, wrap="word")
+        text.pack(fill="both", expand=True, padx=10, pady=10)
+        text.insert("end", f"ЗАЯВКА №{req.id}\n")
+        text.insert("end", f"Дата: {req.start_date}\n")
+        text.insert("end", f"Авто: {req.car_type} {req.car_model}\n")
+        text.insert("end", f"Проблема: {req.problem}\n")
+        text.insert("end", f"Статус: {req.status}\n")
+        text.insert("end", f"Клиент: {req.client_name}, {req.client_phone}\n")
+        if req.master_id:
+            master = next((u for u in users if u.get("id") == req.master_id), {})
+            text.insert("end", f"Механик: {master.get('name', 'Неизвестно')}\n")
+        if req.parts:
+            text.insert("end", f"Запчасти: {req.parts}\n")
+        text.insert("end", "\nКОММЕНТАРИИ:\n")
+        comms = [c for c in comments if c.request_id == req.id]
+        if comms:
+            for c in comms:
+                text.insert("end", f"{c.master_name}: {c.text}\n")
+        else:
+            text.insert("end", "Нет комментариев\n")
+        text.config(state="disabled")
+        frame = tk.Frame(win)
+        frame.pack(pady=10)
+        if self.current_user["role"] == "Автомеханик":
+            tk.Button(frame, text="Изменить статус", command=lambda: self.change_status(req)).pack(side="left", padx=5)
+            tk.Button(frame, text="Добавить запчасти", command=lambda: self.add_parts(req)).pack(side="left", padx=5)
+            tk.Button(frame, text="Комментарий", command=lambda: self.add_comment(req)).pack(side="left", padx=5)
+        elif self.current_user["role"] in ["Оператор", "Менеджер"] and not req.master_id:
+            tk.Button(frame, text="Назначить механика", command=lambda: self.assign_master(req)).pack(pady=10)
+
+    def add_comment_system(self, req, text):
+        c = Comment()
+        c.id = len(comments) + 1
+        c.text = text
+        c.master_name = self.current_user["name"]
+        c.request_id = req.id
+        comments.append(c)
+
+    def change_status(self, req):
+        win = tk.Toplevel(self.window)
+        win.title("Изменить статус")
+        win.geometry("300x250")
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        statuses = ["Новая заявка", "В процессе ремонта", "Ожидание запчастей", "Готова к выдаче", "Завершена"]
+        var = tk.StringVar()
+        for s in statuses:
+            tk.Radiobutton(win, text=s, variable=var, value=s).pack(anchor="w", padx=20)
+        def save():
+            if var.get():
+                req.status = var.get()
+                if var.get() == "Завершена":
+                    req.end_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                self.add_comment_system(req, f"Статус изменен на: {var.get()}")
+                messagebox.showinfo("Успех", "Статус изменен")
+                win.destroy()
+        tk.Button(win, text="Сохранить", command=save).pack(pady=20)
+
+    def add_parts(self, req):
+        win = tk.Toplevel(self.window)
+        win.title("Добавить запчасти")
+        win.geometry("300x150")
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        entry = tk.Entry(win, width=40)
+        entry.pack(pady=10)
+        def save():
+            if entry.get():
+                req.parts = (req.parts + "; " + entry.get()) if req.parts else entry.get()
+                self.add_comment_system(req, f"Добавлены запчасти: {entry.get()}")
+                messagebox.showinfo("Успех", "Запчасти добавлены")
+                win.destroy()
+        tk.Button(win, text="Добавить", command=save).pack()
+
+    def add_comment(self, req):
+        win = tk.Toplevel(self.window)
+        win.title("Добавить комментарий")
+        win.geometry("300x150")
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        entry = tk.Entry(win, width=40)
+        entry.pack(pady=10)
+        def save():
+            if entry.get():
+                self.add_comment_system(req, entry.get())
+                messagebox.showinfo("Успех", "Комментарий добавлен")
+                win.destroy()
+        tk.Button(win, text="Добавить", command=save).pack()
+
+    def assign_master(self, req):
+        win = tk.Toplevel(self.window)
+        win.title("Назначить механика")
+        win.geometry("300x200")
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        masters = [u for u in users if u["role"] == "Автомеханик"]
+        var = tk.StringVar()
+        for m in masters:
+            tk.Radiobutton(win, text=m['name'], variable=var, value=m.get("id", 0)).pack(anchor="w", padx=20)
+        def save():
+            try:
+                req.master_id = int(var.get())
+                self.add_comment_system(req, "Назначен механик")
+                messagebox.showinfo("Успех", "Механик назначен")
+                win.destroy()
+            except:
+                messagebox.showerror("Ошибка", "Выберите механика")
+        tk.Button(win, text="Назначить", command=save).pack(pady=20)
+
+    def add_request(self):
+        win = tk.Toplevel(self.window)
+        win.title("Новая заявка")
+        win.geometry("400x400")
+        tk.Label(win, text="НОВАЯ ЗАЯВКА", font=("Arial", 14)).pack(pady=10)
+        fields = ["Вид авто:", "Модель:", "Проблема:", "ФИО клиента:", "Телефон:"]
+        entries = []
+        frame = tk.Frame(win)
+        frame.pack(pady=10)
+        for i, text in enumerate(fields):
+            tk.Label(frame, text=text).grid(row=i, column=0, sticky="w", pady=5)
+            e = tk.Entry(frame, width=30)
+            e.grid(row=i, column=1, pady=5)
+            entries.append(e)
+        def save():
+            req = Request()
+            req.id = max([r.id for r in requests] + [0]) + 1
+            req.start_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            req.car_type, req.car_model, req.problem, req.client_name, req.client_phone = [e.get() for e in entries]
+            requests.append(req)
+            messagebox.showinfo("Успех", f"Заявка №{req.id} создана")
+            win.destroy()
+        tk.Button(win, text="Создать", command=save).pack(pady=20)
+
+    def show_search(self):
+        win = tk.Toplevel(self.window)
+        win.title("Поиск")
+        win.geometry("600x400")
+        notebook = ttk.Notebook(win)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        frame1 = tk.Frame(notebook)
+        notebook.add(frame1, text="По номеру")
+        tk.Label(frame1, text="Номер заявки:").pack(pady=10)
+        id_entry = tk.Entry(frame1)
+        id_entry.pack()
+        def search_by_id():
+            try:
+                rid = int(id_entry.get())
+                for req in requests:
+                    if req.id == rid:
+                        self.show_request_details(req)
+                        return
+                messagebox.showinfo("Результат", "Заявка не найдена")
+            except:
+                messagebox.showerror("Ошибка", "Введите число")
+        tk.Button(frame1, text="Найти", command=search_by_id).pack(pady=10)
+        frame2 = tk.Frame(notebook)
+        notebook.add(frame2, text="По статусу")
+        status_var = tk.StringVar()
+        statuses = ["Новая заявка", "В процессе ремонта", "Ожидание запчастей", "Готова к выдаче", "Завершена"]
+        for s in statuses:
+            tk.Radiobutton(frame2, text=s, variable=status_var, value=s).pack(anchor="w", padx=20, pady=2)
+        def search_by_status():
+            if not status_var.get():
+                messagebox.showerror("Ошибка", "Выберите статус")
+                return
+            found = [req for req in requests if req.status == status_var.get()]
+            if found:
+                res = tk.Toplevel(win)
+                res.title("Результаты поиска")
+                res.geometry("400x300")
+                lb = tk.Listbox(res)
+                lb.pack(fill="both", expand=True, padx=10, pady=10)
+                for req in found:
+                    lb.insert("end", f"ID: {req.id} | {req.car_model} | {req.start_date}")
+                def view():
+                    s = lb.curselection()
+                    if s:
+                        self.show_request_details(found[s[0]])
+                tk.Button(res, text="Просмотреть", command=view).pack()
+            else:
+                messagebox.showinfo("Результат", "Заявки не найдены")
+        tk.Button(frame2, text="Найти", command=search_by_status).pack(pady=10)
+
+    def show_stats(self):
+        new = work = parts = ready = done = 0
+        for req in requests:
+            if req.status == "Новая заявка": new += 1
+            elif req.status == "В процессе ремонта": work += 1
+            elif req.status == "Ожидание запчастей": parts += 1
+            elif req.status == "Готова к выдаче": ready += 1
+            elif req.status == "Завершена": done += 1
+        win = tk.Toplevel(self.window)
+        win.title("Статистика")
+        win.geometry("300x250")
+        text = tk.Text(win, wrap="word")
+        text.pack(fill="both", expand=True, padx=10, pady=10)
+        text.insert("end", "СТАТИСТИКА\n")
+        text.insert("end", f"Всего заявок: {len(requests)}\n")
+        text.insert("end", f"Новые: {new}\n")
+        text.insert("end", f"В работе: {work}\n")
+        text.insert("end", f"Ждут запчасти: {parts}\n")
+        text.insert("end", f"Готовы: {ready}\n")
+        text.insert("end", f"Завершены: {done}\n")
+        text.config(state="disabled")
+
+if __name__ == "__main__":
+    App()
