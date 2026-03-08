@@ -3,6 +3,9 @@ from tkinter import ttk, messagebox
 import datetime
 from models import Request, Comment
 from data import requests, users, comments, load_data
+import qrcode
+from io import BytesIO
+from PIL import Image, ImageTk
 
 class App:
     def __init__(self):
@@ -110,13 +113,17 @@ class App:
                 text.insert("end", f"{c.master_name}: {c.text}\n")
         else:
             text.insert("end", "Нет комментариев\n")
-        text.config(state="disabled")
+            text.config(state="disabled")
         frame = tk.Frame(win)
         frame.pack(pady=10)
         if self.current_user["role"] == "Автомеханик":
             tk.Button(frame, text="Изменить статус", command=lambda: self.change_status(req)).pack(side="left", padx=5)
             tk.Button(frame, text="Добавить запчасти", command=lambda: self.add_parts(req)).pack(side="left", padx=5)
             tk.Button(frame, text="Комментарий", command=lambda: self.add_comment(req)).pack(side="left", padx=5)
+        elif self.current_user["role"] == "Менеджер качества":
+            tk.Button(frame, text="Продлить срок", command=lambda: self.extend_deadline(req)).pack(side="left", padx=5)
+            tk.Button(frame, text="Привлечь механика", command=lambda: self.assign_additional_mechanic(req)).pack(side="left", padx=5)
+            tk.Button(frame, text="QR-код отзыва", command=lambda: self.show_qr_code(req)).pack(side="left", padx=5)
         elif self.current_user["role"] in ["Оператор", "Менеджер"] and not req.master_id:
             tk.Button(frame, text="Назначить механика", command=lambda: self.assign_master(req)).pack(pady=10)
 
@@ -195,101 +202,78 @@ class App:
                 messagebox.showerror("Ошибка", "Выберите механика")
         tk.Button(win, text="Назначить", command=save).pack(pady=20)
 
-    def add_request(self):
+    def extend_deadline(self, req):
+        """Продление срока заявки (для менеджера качества)"""
         win = tk.Toplevel(self.window)
-        win.title("Новая заявка")
-        win.geometry("400x400")
-        tk.Label(win, text="НОВАЯ ЗАЯВКА", font=("Arial", 14)).pack(pady=10)
-        fields = ["Вид авто:", "Модель:", "Проблема:", "ФИО клиента:", "Телефон:"]
-        entries = []
-        frame = tk.Frame(win)
-        frame.pack(pady=10)
-        for i, text in enumerate(fields):
-            tk.Label(frame, text=text).grid(row=i, column=0, sticky="w", pady=5)
-            e = tk.Entry(frame, width=30)
-            e.grid(row=i, column=1, pady=5)
-            entries.append(e)
+        win.title("Продлить срок")
+        win.geometry("300x200")
+        
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        tk.Label(win, text=f"Текущая дата: {req.end_date or 'не указана'}").pack()
+        
+        tk.Label(win, text="Новая дата (ГГГГ-ММ-ДД):").pack()
+        entry = tk.Entry(win)
+        entry.pack(pady=5)
+        
         def save():
-            req = Request()
-            req.id = max([r.id for r in requests] + [0]) + 1
-            req.start_date = datetime.datetime.now().strftime("%Y-%m-%d")
-            req.car_type, req.car_model, req.problem, req.client_name, req.client_phone = [e.get() for e in entries]
-            requests.append(req)
-            messagebox.showinfo("Успех", f"Заявка №{req.id} создана")
-            win.destroy()
-        tk.Button(win, text="Создать", command=save).pack(pady=20)
+            new_date = entry.get()
+            if new_date:
+                req.end_date = new_date
+                self.add_comment_system(req, f"Срок продлён до {new_date} (менеджер качества)")
+                messagebox.showinfo("Успех", "Срок изменён")
+                win.destroy()
+        
+        tk.Button(win, text="Сохранить", command=save).pack(pady=10)
 
-    def show_search(self):
+    def assign_additional_mechanic(self, req):
+        """Привлечь дополнительного механика (менеджер качества)"""
         win = tk.Toplevel(self.window)
-        win.title("Поиск")
-        win.geometry("600x400")
-        notebook = ttk.Notebook(win)
-        notebook.pack(fill="both", expand=True, padx=10, pady=10)
-        frame1 = tk.Frame(notebook)
-        notebook.add(frame1, text="По номеру")
-        tk.Label(frame1, text="Номер заявки:").pack(pady=10)
-        id_entry = tk.Entry(frame1)
-        id_entry.pack()
-        def search_by_id():
-            try:
-                rid = int(id_entry.get())
-                for req in requests:
-                    if req.id == rid:
-                        self.show_request_details(req)
-                        return
-                messagebox.showinfo("Результат", "Заявка не найдена")
-            except:
-                messagebox.showerror("Ошибка", "Введите число")
-        tk.Button(frame1, text="Найти", command=search_by_id).pack(pady=10)
-        frame2 = tk.Frame(notebook)
-        notebook.add(frame2, text="По статусу")
-        status_var = tk.StringVar()
-        statuses = ["Новая заявка", "В процессе ремонта", "Ожидание запчастей", "Готова к выдаче", "Завершена"]
-        for s in statuses:
-            tk.Radiobutton(frame2, text=s, variable=status_var, value=s).pack(anchor="w", padx=20, pady=2)
-        def search_by_status():
-            if not status_var.get():
-                messagebox.showerror("Ошибка", "Выберите статус")
-                return
-            found = [req for req in requests if req.status == status_var.get()]
-            if found:
-                res = tk.Toplevel(win)
-                res.title("Результаты поиска")
-                res.geometry("400x300")
-                lb = tk.Listbox(res)
-                lb.pack(fill="both", expand=True, padx=10, pady=10)
-                for req in found:
-                    lb.insert("end", f"ID: {req.id} | {req.car_model} | {req.start_date}")
-                def view():
-                    s = lb.curselection()
-                    if s:
-                        self.show_request_details(found[s[0]])
-                tk.Button(res, text="Просмотреть", command=view).pack()
-            else:
-                messagebox.showinfo("Результат", "Заявки не найдены")
-        tk.Button(frame2, text="Найти", command=search_by_status).pack(pady=10)
-
-    def show_stats(self):
-        new = work = parts = ready = done = 0
-        for req in requests:
-            if req.status == "Новая заявка": new += 1
-            elif req.status == "В процессе ремонта": work += 1
-            elif req.status == "Ожидание запчастей": parts += 1
-            elif req.status == "Готова к выдаче": ready += 1
-            elif req.status == "Завершена": done += 1
-        win = tk.Toplevel(self.window)
-        win.title("Статистика")
+        win.title("Привлечь механика")
         win.geometry("300x250")
-        text = tk.Text(win, wrap="word")
-        text.pack(fill="both", expand=True, padx=10, pady=10)
-        text.insert("end", "СТАТИСТИКА\n")
-        text.insert("end", f"Всего заявок: {len(requests)}\n")
-        text.insert("end", f"Новые: {new}\n")
-        text.insert("end", f"В работе: {work}\n")
-        text.insert("end", f"Ждут запчасти: {parts}\n")
-        text.insert("end", f"Готовы: {ready}\n")
-        text.insert("end", f"Завершены: {done}\n")
-        text.config(state="disabled")
+        
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        
+        mechanics = [u for u in users if u["role"] == "Автомеханик"]
+        var = tk.StringVar()
+        
+        for m in mechanics:
+            tk.Radiobutton(win, text=m['name'], variable=var, value=m['name']).pack(anchor="w", padx=20)
+        
+        def save():
+            mech_name = var.get()
+            if mech_name:
+                self.add_comment_system(req, f"Привлечён механик: {mech_name}")
+                messagebox.showinfo("Успех", f"Механик {mech_name} привлечён")
+                win.destroy()
+        
+        tk.Button(win, text="Привлечь", command=save).pack(pady=20)
+
+    def show_qr_code(self, req):
+        """Показать QR-код с отзывом"""
+        url = "https://docs.google.com/forms/d/e/1FAIpQLSdhZcExx6LSIXxk0ub55mSu-WIh23WYdGG9HY5EZhLDo7P8eA/viewform"
+        
+        qr = qrcode.make(url)
+        
+        img_bytes = BytesIO()
+        qr.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        
+        pil_img = Image.open(img_bytes)
+        img_tk = ImageTk.PhotoImage(pil_img)
+        
+        win = tk.Toplevel(self.window)
+        win.title("QR-код для отзыва")
+        win.geometry("300x350")
+        
+        tk.Label(win, text="Оцените качество работы").pack(pady=10)
+        
+        label_img = tk.Label(win, image=img_tk)
+        label_img.image = img_tk
+        label_img.pack(pady=10)
+        
+        tk.Label(win, text="Отсканируйте QR-код", font=("Arial", 10)).pack()
+        
+        tk.Button(win, text="Закрыть", command=win.destroy).pack(pady=10)
 
 if __name__ == "__main__":
     App()
