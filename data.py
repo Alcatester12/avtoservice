@@ -10,6 +10,7 @@ users = [
     {"login": "login4", "password": "pass4", "name": "Катя", "role": "Оператор"},
     {"login": "login5", "password": "pass5", "name": "Калыван", "role": "Оператор"},
     {"login": "login6", "password": "pass6", "name": "Клиент", "role": "Заказчик"},
+    {"login": "login7", "password": "pass7", "name": "Елена", "role": "Менеджер качества"},
 ]
 
 def load_data():
