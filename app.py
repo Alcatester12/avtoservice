@@ -3,6 +3,9 @@ from tkinter import ttk, messagebox
 import datetime
 from models import Request, Comment
 from data import requests, users, comments, load_data
+import qrcode
+from io import BytesIO
+from PIL import Image, ImageTk
 
 class App:
     def __init__(self):
@@ -117,6 +120,10 @@ class App:
             tk.Button(frame, text="Изменить статус", command=lambda: self.change_status(req)).pack(side="left", padx=5)
             tk.Button(frame, text="Добавить запчасти", command=lambda: self.add_parts(req)).pack(side="left", padx=5)
             tk.Button(frame, text="Комментарий", command=lambda: self.add_comment(req)).pack(side="left", padx=5)
+        elif self.current_user["role"] == "Менеджер качества":
+            tk.Button(frame, text="Продлить срок", command=lambda: self.extend_deadline(req)).pack(side="left", padx=5)
+            tk.Button(frame, text="Привлечь механика", command=lambda: self.assign_additional_mechanic(req)).pack(side="left", padx=5)
+            tk.Button(frame, text="QR-код отзыва", command=lambda: self.show_qr_code(req)).pack(side="left", padx=5)
         elif self.current_user["role"] in ["Оператор", "Менеджер"] and not req.master_id:
             tk.Button(frame, text="Назначить механика", command=lambda: self.assign_master(req)).pack(pady=10)
 
@@ -194,6 +201,87 @@ class App:
             except:
                 messagebox.showerror("Ошибка", "Выберите механика")
         tk.Button(win, text="Назначить", command=save).pack(pady=20)
+
+    def extend_deadline(self, req):
+        """Продление срока заявки (для менеджера качества)"""
+        win = tk.Toplevel(self.window)
+        win.title("Продлить срок")
+        win.geometry("300x200")
+        
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        tk.Label(win, text=f"Текущая дата: {req.end_date or 'не указана'}").pack()
+        
+        tk.Label(win, text="Новая дата (ГГГГ-ММ-ДД):").pack()
+        entry = tk.Entry(win)
+        entry.pack(pady=5)
+        
+        def save():
+            new_date = entry.get()
+            if new_date:
+                req.end_date = new_date
+                self.add_comment_system(req, f"Срок продлён до {new_date} (менеджер качества)")
+                messagebox.showinfo("Успех", "Срок изменён")
+                win.destroy()
+        
+        tk.Button(win, text="Сохранить", command=save).pack(pady=10)
+
+    def assign_additional_mechanic(self, req):
+        """Привлечь дополнительного механика (менеджер качества)"""
+        win = tk.Toplevel(self.window)
+        win.title("Привлечь механика")
+        win.geometry("300x250")
+        
+        tk.Label(win, text=f"Заявка №{req.id}").pack(pady=10)
+        
+        mechanics = [u for u in users if u["role"] == "Автомеханик"]
+        var = tk.StringVar()
+        
+        for m in mechanics:
+            tk.Radiobutton(win, text=m['name'], variable=var, value=m['name']).pack(anchor="w", padx=20)
+        
+        def save():
+            mech_name = var.get()
+            if mech_name:
+                self.add_comment_system(req, f"Привлечён механик: {mech_name}")
+                messagebox.showinfo("Успех", f"Механик {mech_name} привлечён")
+                win.destroy()
+        
+        tk.Button(win, text="Привлечь", command=save).pack(pady=20)
+
+    def show_qr_code(self, req):
+        """Показать QR-код с отзывом"""
+        url = "https://docs.google.com/forms/d/e/1FAIpQLSdhZcExx6LSIXxk0ub55mSu-WIh23WYdGG9HY5EZhLDo7P8eA/viewform"
+        
+        qr = qrcode.make(url)
+        
+        img_bytes = BytesIO()
+        qr.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        
+        pil_img = Image.open(img_bytes)
+        img_tk = ImageTk.PhotoImage(pil_img)
+        
+        win = tk.Toplevel(self.window)
+        win.title("QR-код для отзыва")
+        win.geometry("300x350")
+        
+        tk.Label(win, text="Оцените качество работы").pack(pady=10)
+        
+        label_img = tk.Label(win, image=img_tk)
+        label_img.image = img_tk
+        label_img.pack(pady=10)
+        
+        tk.Label(win, text="Отсканируйте QR-код", font=("Arial", 10)).pack()
+        
+        tk.Button(win, text="Закрыть", command=win.destroy).pack(pady=10)
+
+    def add_comment_system(self, req, text):
+        c = Comment()
+        c.id = len(comments) + 1
+        c.text = text
+        c.master_name = self.current_user["name"]
+        c.request_id = req.id
+        comments.append(c)    
 
     def add_request(self):
         win = tk.Toplevel(self.window)
